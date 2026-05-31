@@ -1,27 +1,36 @@
 import { app, HttpRequest, HttpResponseInit, InvocationContext } from "@azure/functions";
 import { getCosmosClient } from "../CosmosClient";
 
-export async function GetTasks(request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
+export async function GetTask(request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
     context.log(`Http function processed request for url "${request.url}"`);
 
+    const taskId = request.query.get('id');
     const organizationId = request.query.get('organizationId');
-    if (!organizationId) {
-        return { status: 400, jsonBody: { error: "organizationId is required" } };
+
+    if (!taskId || !organizationId) {
+        return { status: 400, jsonBody: { error: "id and organizationId are required" } };
     }
 
     try {
         const client = getCosmosClient();
-        const result = await client.database("TaskApp")
+        const task = await client.database("TaskApp")
             .container("Tasks")
-            .items.query({
-                query: "SELECT * FROM c WHERE c.organizationId = @organizationId",
-                parameters: [{ name: "@organizationId", value: organizationId }]
-            })
-            .fetchNext();
+            .item(taskId, organizationId)
+            .read();
 
-        return { jsonBody: result.resources, status: 200 };
+        if (!task.resource) {
+            return { status: 404, jsonBody: { error: "Task not found" } };
+        }
+
+        return { jsonBody: task.resource, status: 200 };
     } catch (error) {
-        context.error("Error fetching tasks:", error);
-        return { status: 500, jsonBody: { error: "Failed to fetch tasks" } };
+        context.error("Error fetching task:", error);
+        return { status: 500, jsonBody: { error: "Failed to fetch task" } };
     }
 };
+
+app.http('GetTask', {
+    methods: ['GET'],
+    authLevel: 'anonymous',
+    handler: GetTask
+});
