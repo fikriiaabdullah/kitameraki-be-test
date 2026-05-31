@@ -1,33 +1,54 @@
-import { CosmosClient } from "@azure/cosmos";
 import { app, HttpRequest, HttpResponseInit, InvocationContext } from "@azure/functions";
-
+import { PatchOperation } from "@azure/cosmos";
+import { getCosmosClient } from "../CosmosClient";
 
 export async function UpdateTask(request: HttpRequest, context: InvocationContext): Promise<HttpResponseInit> {
-    const body = await request.json() as object;
+    context.log(`Http function processed request for url "${request.url}"`);
+
     const taskId = request.query.get('id');
     const organizationId = request.query.get('organizationId');
 
-    let patchRequests = [];
-
-    for (let key in body) {
-        patchRequests.push({
-            "op": "replace",
-            "path": `/${key}`,
-            "value": body[key]
-        });
+    if (!taskId || !organizationId) {
+        return { status: 400, jsonBody: { error: "id and organizationId are required" } };
     }
 
-    const client = new CosmosClient("this is a connection string");
-    const createdTask = await client.database("TaskApp")
-        .container("Tasks")
-        .item(taskId, organizationId)
-        .patch(patchRequests);
+    let body: Record<string, unknown>;
+    try {
+        const parsed = await request.json();
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            return { status: 400, jsonBody: { error: "Request body must be a JSON object" } };
+        }
+        body = parsed as Record<string, unknown>;
+    } catch {
+        return { status: 400, jsonBody: { error: "Invalid JSON body" } };
+    }
 
-    return { jsonBody: createdTask.resource, status: 200 };
+    const patchOperations: PatchOperation[] = Object.keys(body).map((key) => ({
+        op: "replace",
+        path: `/${key}`,
+        value: body[key]
+    }));
+
+    if (patchOperations.length === 0) {
+        return { status: 400, jsonBody: { error: "Request body must not be empty" } };
+    }
+
+    try {
+        const client = getCosmosClient();
+        const updatedTask = await client.database("TaskApp")
+            .container("Tasks")
+            .item(taskId, organizationId)
+            .patch(patchOperations);
+
+        return { jsonBody: updatedTask.resource, status: 200 };
+    } catch (error) {
+        context.error("Error updating task:", error);
+        return { status: 500, jsonBody: { error: "Failed to update task" } };
+    }
 };
 
 app.http('UpdateTask', {
-    methods: ['POST'],
+    methods: ['PATCH'],  // <-- diperbaiki
     authLevel: 'anonymous',
     handler: UpdateTask
 });
